@@ -7,10 +7,15 @@ import pandas
 ###########
 
 run_info_file = 'data/SraRunTable.txt'
+
 sra_container = 'shub://TomHarrop/singularity-containers:sra_2.9.2'
 bbduk_container = 'shub://TomHarrop/singularity-containers:bbmap_38.00'
 biopython_container = 'shub://TomHarrop/singularity-containers:biopython_1.72'
 hmmer_container = 'shub://TomHarrop/singularity-containers:hmmer_3.2.1'
+porechop_container = 'shub://TomHarrop/singularity-containers:porechop_0.2.3'
+r_container = 'shub://TomHarrop/singularity-containers:r_3.5.1'
+clustalo_container = 'shub://TomHarrop/singularity-containers:clustalo_1.2.4'
+bioc_container = 'shub://TomHarrop/singularity-containers:bioconductor_3.7'
 
 ########
 # MAIN #
@@ -36,14 +41,133 @@ all_samples = sorted(set(name_to_url.keys()))
 
 rule target:
     input:
-        expand('output/hmmer/rf{rf}.txt',
-               rf=[1, 2, 3, 4, 5, 6])
+        'output/alignments/p450_all_trim2.faa'
 
-# run transdecoder to get reads of interest
+rule trimal1:
+    input:
+        'output/alignments/p450_all_trim_align2.faa'
+    output:
+        'output/alignments/p450_all_trim2.faa'
+    log:
+        'output/logs/trimal2.log'
+    threads:
+        1
+    singularity:
+        clustalo_container
+    shell:
+        'trimal '
+        '-in {input} '
+        '-out {output} '
+        '-strictplus '
+        '&> {log}'
 
-# run bbmap to extract filtered reads
+# align2
+rule clustalo2:
+    input:
+        fasta = 'output/alignments/p450_all_trim1.faa',
+        hmm = 'data/p450.hmm'
+    output:
+        'output/alignments/p450_all_trim_align2.faa'
+    log:
+        'output/logs/clustalo2.log'
+    threads:
+        50
+    singularity:
+        clustalo_container
+    shell:
+        'clustalo '
+        '--threads={threads} '
+        '--in {input.fasta} '
+#        '--hmm-in {input.hmm} '
+        '--dealign '
+        '--out {output} '
+        '&> {log}'
+
+
+# trim1
+rule trimal:
+    input:
+        'output/alignments/p450_all.faa'
+    output:
+        'output/alignments/p450_all_trim1.faa'
+    log:
+        'output/logs/trimal.log'
+    threads:
+        1
+    singularity:
+        clustalo_container
+    shell:
+        'trimal '
+        '-in {input} '
+        '-out {output} '
+        '-gappyout '
+        '&> {log}'
+
+# align
+rule clustalo:
+    input:
+        fasta = expand('output/p450_transcripts/rf{rf}.fasta',
+                       rf=[1, 2, 3, 4, 5, 6]),
+        mm = 'data/mm_p450s.fasta',
+        hmm = 'data/p450.hmm'
+    output:
+        'output/alignments/p450_all.faa'
+    log:
+        'output/logs/clustalo.log'
+    threads:
+        50
+    singularity:
+        clustalo_container
+    shell:
+        'cat {input.fasta} {input.mm} | '
+        'clustalo '
+        '--threads={threads} '
+        '--in - '
+        '--hmm-in {input.hmm} '
+        '--dealign '
+        '--out {output} '
+        '&> {log}'
+
+
+# run bbmap to extract protein sequences
+rule filter_by_name:
+    input:
+        p450_reads = 'output/hmmer/P450_read_names_rf{rf}.txt',
+        fasta = 'output/translated/rf{rf}.fasta'
+    output:
+        'output/p450_transcripts/rf{rf}.fasta'
+    threads:
+        1
+    log:
+        'output/logs/filter_by_name/rf{rf}.log'
+    singularity:
+        bbduk_container
+    shell:
+        'filterbyname.sh '
+        'ignorejunk '
+        'in={input.fasta} '
+        'out={output} '
+        'include=t '
+        'names={input.p450_reads} '
+        '&> {log}'
 
 # run R to filter reads
+rule filter_p450_reads:
+    input:
+        hmmer_results = expand('output/hmmer/rf{rf}.txt',
+                               rf=[1, 2, 3, 4, 5, 6])
+    output:
+        expand('output/hmmer/P450_read_names_rf{rf}.txt',
+               rf=[1, 2, 3, 4, 5, 6])
+    params:
+        out_prefix = 'output/hmmer/P450_read_names_rf'
+    log:
+        'output/logs/filter_p450_reads.log'
+    singularity:
+        r_container
+    script:
+        'src/filter_p450_reads.R'
+
 
 rule hmmer:
     input:
@@ -54,7 +178,7 @@ rule hmmer:
     threads:
         50
     log:
-        'output/hmmer/rf{rf}_hmmer.log'
+        'output/logs/rf{rf}_hmmer.log'
     singularity:
         hmmer_container
     shell:
@@ -84,14 +208,14 @@ rule translate:
 
 rule reformat:
     input:
-        expand('output/fastq/{sample_name}/{sample_name}.fastq',
+        expand('output/porechop/{sample_name}.fastq',
                sample_name=all_samples)
     output:
         fa = 'output/fasta/bcell_reads_filtered.fasta',
         bhist = 'output/fasta/bcell_reads_filtered_bhist.txt',
         qhist = 'output/fasta/bcell_reads_filtered_qhist.txt',
     log:
-        'output/fasta/reformat.log'
+        'output/logs/reformat.log'
     singularity:
         bbduk_container
     shell:
@@ -109,14 +233,23 @@ rule reformat:
         'trimq=7 '
         '2> {log}'
 
-rule join_fastq:
+rule porechop:
     input:
-        expand('output/fastq/{sample_name}/{sample_name}.fastq',
-               sample_name=all_samples)
+        'output/fastq/{sample_name}/{sample_name}.fastq'
     output:
-        'output/fastq_all/all_bcell_reads.fastq'
+        'output/porechop/{sample_name}.fastq'
+    threads:
+        2
+    log:
+        'output/logs/porechop/{sample_name}.log'
+    singularity:
+        porechop_container
     shell:
-        'cat {input} > {output}'
+        'porechop '
+        '-i {input} '
+        '-o {output} '
+        '-t {threads} '
+        '&> {log}'
 
 rule dump_fastq:
     input:
@@ -124,8 +257,6 @@ rule dump_fastq:
     output:
         fq = 'output/fastq/{sample_name}/{sample_name}.fastq',
         tmpdir = temp(directory('output/fastq/tmp_{sample_name}'))
-    priority:
-        1
     threads:
         48
     params:

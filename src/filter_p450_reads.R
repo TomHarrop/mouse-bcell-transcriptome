@@ -1,16 +1,28 @@
 #!/usr/bin/env Rscript
 
+log <- file(snakemake@log[[1]], open = "wt")
+sink(log, type = "message")
+sink(log, append = TRUE, type = "output")
+
 library(data.table)
+
+#############
+# FUNCTIONS #
+#############
+
+WriteP450Reads <- function(x) {
+    my_dt <- best_hits[rf == x]
+    my_file <- paste0(out_prefix, x, ".txt")
+    fwrite(unique(my_dt[, .(target_name)]),
+           my_file,
+           col.names = FALSE)
+}
 
 ###########
 # GLOBALS #
 ###########
 
-
-hmmer_results_files <- list.files("output/hmmer",
-                                  pattern = "rf[[:digit:]].txt",
-                                  full.names = TRUE)
-
+# tidy read of hmmer tblout
 cn <- c("target_name",
         "target_accession",
         "query_name",
@@ -31,6 +43,14 @@ cn <- c("target_name",
         "domain_no_inc",
         "description_of_target")
 
+hmmer_results_files <- snakemake@input[["hmmer_results"]]
+out_prefix <- snakemake@params[["out_prefix"]]
+
+# dev
+# hmmer_results_files <- list.files("output/hmmer",
+#                                   pattern = "rf[[:digit:]].txt",
+#                                   full.names = TRUE)
+# out_prefix <- 'output/hmmer/P450_read_names_rf'
 
 ########
 # MAIN #
@@ -47,13 +67,11 @@ hmmer_results <- rbindlist(hmmer_results_list, idcol = "rf")
 # get the best hmmer result for each target
 my_rows <- hmmer_results[, .I[which.max(`full_score`)],
                          by = .(target_name)][, V1]
-best_hits <- hmmer_results[my_rows]
+best_hits <- hmmer_results[my_rows][`full_E-value` <= 0.01]
 setorder(best_hits, -full_score)
 
-# all transcripts < cutoff
-hmmer_results[full_score > 10, unique(target_name)]
+# make a list for each reading frame
+lapply(best_hits[, unique(rf)], WriteP450Reads)
 
-
-
-
-
+# log
+sessionInfo()
