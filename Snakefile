@@ -129,6 +129,32 @@ rule clustalo:
         '&> {log}'
 
 
+# run bbmap to extract raw sequences
+rule filter_transcripts_by_name:
+    input:
+        p450_reads = expand('output/hmmer/P450_read_names_rf{rf}.txt',
+                            rf=[1, 2, 3, 4, 5, 6]),
+        fasta = 'output/fasta/bcell_reads_filtered.fasta'
+    output:
+        names = temp('output/p450_transcripts/names.txt'),
+        fasta = 'output/p450_transcripts/P450_transcripts.fasta'
+    threads:
+        1
+    log:
+        'output/logs/filter_by_name/transcripts.log'
+    singularity:
+        bbduk_container
+    shell:
+        'cat {input.p450_reads} > {output.names} ; '
+        'filterbyname.sh '
+        'ignorejunk '
+        'in={input.fasta} '
+        'out={output.fasta} '
+        'include=t '
+        'names={output.names} '
+        '&> {log}'
+
+
 # run bbmap to extract protein sequences
 rule filter_by_name:
     input:
